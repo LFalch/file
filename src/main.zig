@@ -1,19 +1,28 @@
 const std = @import("std");
 const file = @import("file.zig");
 
+var args_buf: [4096]u8 = undefined;
+
+fn getArgs() ![]const [:0]const u8 {
+    var arena_alloc = std.heap.FixedBufferAllocator.init(&args_buf);
+    const arena = arena_alloc.allocator();
+
+    return std.process.argsAlloc(arena);
+}
+
 pub fn main() !u8 {
     const stdout_file = std.io.getStdOut().writer();
     const stderr_file = std.io.getStdErr().writer();
+    const args = try getArgs();
 
     var ret: u8 = 0;
 
-    if (std.os.argv.len == 1) {
-        try stderr_file.print("Usage: {s} <files..>\n", .{std.mem.span(std.os.argv[0])});
+    if (args.len == 1) {
+        try stderr_file.print("Usage: {s} <files..>\n", .{args[0]});
         return 1;
     }
 
-    for (std.os.argv[1..]) |arg| {
-        const path = std.mem.span(arg);
+    for (args[1..]) |path| {
         const class = classify_file(path) catch |e| {
             try stderr_file.print("{s}: error {s}\n", .{ path, @errorName(e) });
             ret = 1;

@@ -11,7 +11,7 @@ pub const Class = enum {
         return switch (self) {
             .empty => "empty",
             .ascii => "ASCII text",
-            .latin1 => "ISO 8859 text",
+            .latin1 => "ISO-8859 text",
             .utf8 => "UTF-8 Unicode text",
             .data => "data",
         };
