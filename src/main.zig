@@ -1,19 +1,17 @@
 const std = @import("std");
 const file = @import("file.zig");
-
-var args_buf: [4096]u8 = undefined;
-
-fn getArgs() ![]const [:0]const u8 {
-    var arena_alloc = std.heap.FixedBufferAllocator.init(&args_buf);
-    const arena = arena_alloc.allocator();
-
-    return std.process.argsAlloc(arena);
-}
+const MappedFile = @import("MappedFile.zig");
 
 pub fn main() !u8 {
-    const stdout_file = std.io.getStdOut().writer();
+    var sfb_alloc = std.heap.stackFallback(16 * 4096, std.heap.page_allocator);
+    const alloc = sfb_alloc.get();
+
+    const stdout_raw_file = std.io.getStdOut().writer();
+    var stdout_buf_writer = std.io.bufferedWriter(stdout_raw_file);
+    const stdout_file = stdout_buf_writer.writer();
     const stderr_file = std.io.getStdErr().writer();
-    const args = try getArgs();
+    const args = try std.process.argsAlloc(alloc);
+    defer std.process.argsFree(alloc, args);
 
     var ret: u8 = 0;
 
@@ -23,27 +21,25 @@ pub fn main() !u8 {
     }
 
     for (args[1..]) |path| {
-        const class = classify_file(path) catch |e| {
+        const class = classify_file(path, alloc) catch |e| {
             try stderr_file.print("{s}: error {s}\n", .{ path, @errorName(e) });
             ret = 1;
             continue;
         };
 
         try stdout_file.print("{s}: {s}\n", .{ path, class.name() });
+        try stdout_buf_writer.flush();
     }
 
     return ret;
 }
 
-fn classify_file(path: []const u8) !file.Class {
-    var f = try std.fs.cwd().openFile(path, .{});
-    var buf_reader = std.io.bufferedReader(f.reader());
-    const reader = buf_reader.reader();
+fn classify_file(path: []const u8, alloc: std.mem.Allocator) !file.Class {
+    const mapped_file = try MappedFile.init(path, alloc);
+    defer mapped_file.deinit();
 
     var classifier = file.Classifier.init();
-    while (true) {
-        const b = reader.readByte() catch |e|
-            if (e == error.EndOfStream) break else return e;
+    for (mapped_file.buf) |b| {
         if (classifier.step(b)) break;
     }
     return classifier.finish();
