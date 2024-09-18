@@ -18,7 +18,16 @@ pub const Class = enum {
     }
 };
 
-pub const Classifier = packed struct(u8) {
+fn isAsciiText(byte: u8) bool {
+    return switch (byte) {
+        0x07...0xd => true,
+        0x1b => true,
+        0x20...0x7e => true,
+        else => false,
+    };
+}
+
+pub const Classifier = struct {
     const State = packed struct(u4) {
         empty: bool = true,
         ascii: bool = true,
@@ -26,7 +35,7 @@ pub const Classifier = packed struct(u8) {
         utf8: bool = true,
     };
     possible_text: State = .{},
-    expected_follow_bytes: u4 = 0,
+    expected_follow_bytes: u2 = 0,
 
     const Self = @This();
 
@@ -35,34 +44,31 @@ pub const Classifier = packed struct(u8) {
     }
     pub fn step(self: *Self, byte: u8) bool {
         self.possible_text.empty = false;
-        if (self.possible_text.ascii) {
-            switch (byte) {
-                0x07...0xd => {},
-                0x1b => {},
-                0x20...0x7e => {},
-                else => self.possible_text.ascii = false,
-            }
+        if (self.possible_text.ascii and !isAsciiText(byte)) {
+            self.possible_text.ascii = false;
         }
         if (self.possible_text.latin1) {
-            switch (byte) {
-                0x07...0xd => {},
-                0x1b => {},
-                0x20...0x7e => {},
-                160...255 => {},
-                else => self.possible_text.latin1 = false,
-            }
+            if (!(isAsciiText(byte) or byte >= 160))
+                self.possible_text.latin1 = false;
         }
-        if (self.possible_text.utf8) {
-            const leading_ones = @clz(~byte);
-            if (self.expected_follow_bytes > 0) {
-                self.expected_follow_bytes -= 1;
-                if (leading_ones != 1) self.possible_text.utf8 = false;
-            } else if (leading_ones == 0) {
-                self.possible_text.utf8 = std.ascii.isASCII(byte);
-            } else if (leading_ones == 1) {
-                self.possible_text.utf8 = false;
-            } else {
-                self.expected_follow_bytes = leading_ones - 1;
+        utf8: {
+            if (self.possible_text.utf8) {
+                if (self.expected_follow_bytes > 0) {
+                    self.expected_follow_bytes -= 1;
+                    // if it isn't a follow byte, it is not UTF-8
+                    if (@clz(~byte) != 1) self.possible_text.utf8 = false;
+                } else {
+                    const follow_bytes = std.unicode.utf8ByteSequenceLength(byte) catch {
+                        self.possible_text.utf8 = false;
+                        break :utf8;
+                    } - 1;
+
+                    if (follow_bytes == 0) {
+                        if (!isAsciiText(byte)) self.possible_text.utf8 = false;
+                    } else {
+                        self.expected_follow_bytes = @intCast(follow_bytes);
+                    }
+                }
             }
         }
 
